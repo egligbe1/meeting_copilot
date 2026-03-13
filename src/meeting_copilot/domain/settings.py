@@ -23,7 +23,7 @@ class Settings:
     groq_model_llm: str = field(
         default="llama-3.3-70b-versatile"
     )
-    word_trigger: int = field(default=60)  # words before LLM call
+    word_trigger: int = field(default=40)  # words before LLM call
     context_window_minutes: int = field(default=3)
 
     # UI

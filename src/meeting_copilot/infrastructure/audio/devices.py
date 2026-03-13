@@ -63,15 +63,26 @@ def list_devices() -> list[AudioDevice]:
 
 
 def find_wasapi_loopback() -> AudioDevice | None:
-    """Find the first WASAPI loopback input device (Windows only).
-
-    Returns None on non-Windows platforms or if no loopback device is found.
+    """Find a system audio capture device (Windows only).
+    
+    Priority:
+    1. WASAPI Loopback device
+    2. Stereo Mix
     """
     if sys.platform != "win32":
         return None
 
-    for device in list_devices():
+    devices = list_devices()
+    
+    # 1. Try real WASAPI loopback
+    for device in devices:
         if device["is_loopback"]:
+            return device
+    
+    # 2. Try Stereo Mix (any API, though usually WDM-KS or MME)
+    for device in devices:
+        if "stereo mix" in device["name"].lower():
+            logger.info("Found Stereo Mix as loopback fallback: %s", device["name"])
             return device
 
     return None
