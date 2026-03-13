@@ -21,9 +21,9 @@ class Settings:
 
     # LLM
     groq_model_llm: str = field(
-        default="meta-llama/llama-4-scout-17b-16e-instruct"
+        default="llama-3.3-70b-versatile"
     )
-    word_trigger: int = field(default=80)  # words before LLM call
+    word_trigger: int = field(default=60)  # words before LLM call
     context_window_minutes: int = field(default=3)
 
     # UI

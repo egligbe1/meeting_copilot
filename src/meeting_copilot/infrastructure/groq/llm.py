@@ -95,7 +95,15 @@ class GroqLLMClient:
 
             # Parse JSON array of strings
             try:
-                questions = json.loads(content)
+                # Robust extraction: find the first '[' and last ']' to ignore preamble/thinking
+                start_idx = content.find("[")
+                end_idx = content.rfind("]")
+                if start_idx == -1 or end_idx == -1:
+                    raise ValueError("No JSON array found in response")
+                
+                json_str = content[start_idx : end_idx + 1]
+                questions = json.loads(json_str)
+
                 if not isinstance(questions, list):
                     raise ValueError("Response is not a JSON array")
                 questions = tuple(str(q) for q in questions)

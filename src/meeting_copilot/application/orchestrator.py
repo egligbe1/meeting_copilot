@@ -150,15 +150,26 @@ class Orchestrator(QObject):
 
         # Print to terminal (useful for Phase 2/3 terminal mode)
         print(f"[{event.timestamp:%H:%M:%S}] {event.speaker}: {event.text}")
+        
+        # Diagnostic info
+        words = len(event.text.split())
+        current_new = self.buffer._new_word_count
+        target = self.buffer._word_trigger
+        logger.info(
+            "Segment added (%d words). Accumulated: %d/%d toward next trigger",
+            words, current_new, target
+        )
 
         if self.buffer.should_trigger():
             ctx = self.buffer.get_context_string()
             word_count = self.buffer.total_word_count
             self.buffer.reset_trigger_count()
 
+            logger.info("Triggering AI Advisor with %d words of context...", word_count)
             worker = AdvisorWorker(
                 llm_client=self.llm,
                 context=ctx,
+                task="questions",
                 word_count=word_count,
                 parent=self,
             )

@@ -46,32 +46,39 @@ class EventBus:
     ) -> None:
         """Subscribe a Qt slot ensuring it runs on the **main thread**.
 
-        Uses a QObject bridge with a Signal to marshal the event invocation
-        onto the Qt event loop, which is more stable than bare invokeMethod
-        in PySide6.
+        Uses QMetaObject.invokeMethod with QueuedConnection to marshal the
+        event invocation onto the Qt event loop of the thread that owns
+        the bridge object (the main thread).
         """
-        from PySide6.QtCore import QObject, Signal, Slot  # noqa: PLC0415
+        from PySide6.QtCore import (  # noqa: PLC0415
+            QMetaObject,
+            QObject,
+            Qt,
+            Slot,
+        )
 
         class QtBridge(QObject):
-            triggered = Signal(object)
-
-            def __init__(self, callback: Callable[[Any], None]) -> None:
-                super().__init__()
-                self.triggered.connect(callback)
-
             @Slot(object)
-            def on_event(self, event: Any) -> None:
-                self.triggered.emit(event)
+            def handle(self, event: Any) -> None:
+                slot(event)
 
-        bridge = QtBridge(slot)
+        # Create bridge on the current thread (Main Thread)
+        bridge = QtBridge()
+
         # Store bridge reference to prevent GC
         with self._lock:
             if not hasattr(self, "_qt_bridges"):
                 self._qt_bridges: list[QtBridge] = []
             self._qt_bridges.append(bridge)
 
-        def _invoke(event: T) -> None:  # pragma: no cover
-            bridge.on_event(event)
+        def _invoke(event: T) -> None:
+            # Marshal to the bridge's thread (Main Thread)
+            QMetaObject.invokeMethod(
+                bridge,
+                "handle",
+                Qt.ConnectionType.QueuedConnection,
+                event,
+            )
 
         self.subscribe(event_type, _invoke)
 
