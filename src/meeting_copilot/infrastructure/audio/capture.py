@@ -69,7 +69,7 @@ class AudioThread(QThread):
         self._settings = settings
         self._running = False
 
-    def run(self) -> None:  # noqa: C901 — complexity acceptable for audio loop
+    def run(self) -> None:  # noqa: C901
         """Main capture loop — runs on a background thread."""
         self._running = True
         bus = get_bus()
@@ -82,146 +82,104 @@ class AudioThread(QThread):
         loopback_lock = threading.Lock()
 
         has_loopback = False
+        lb_rate = SAMPLE_RATE
 
-        # --- Mic callback ---
-        def mic_callback(
-            indata: np.ndarray,
-            frames: int,
-            time_info: Any,
-            status: sd.CallbackFlags,
-        ) -> None:
-            if status:
-                logger.debug("Mic stream status: %s", status)
-            with mic_lock:
-                mic_buffer.append(indata[:, 0].copy())
+        # --- Callbacks ---
+        def mic_callback(indata, frames, time, status):
+            if status: logger.debug("Mic status: %s", status)
+            with mic_lock: mic_buffer.append(indata[:, 0].copy())
 
-        # --- Loopback callback ---
-        def loopback_callback(
-            indata: np.ndarray,
-            frames: int,
-            time_info: Any,
-            status: sd.CallbackFlags,
-        ) -> None:
-            if status:
-                logger.debug("Loopback stream status: %s", status)
-            with loopback_lock:
-                loopback_buffer.append(indata[:, 0].copy())
+        def loopback_callback(indata, frames, time, status):
+            if status: logger.debug("Loopback status: %s", status)
+            with loopback_lock: loopback_buffer.append(indata[:, 0].copy())
 
-        # Open streams
+        # Open Mic
         mic_stream = None
-        loopback_stream = None
-
         try:
             mic_device = self._settings.mic_device_id
             mic_stream = sd.InputStream(
-                device=mic_device,
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="float32",
-                callback=mic_callback,
-                blocksize=SAMPLE_RATE,  # 1-second blocks
+                device=mic_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
+                dtype="float32", callback=mic_callback, blocksize=SAMPLE_RATE
             )
             mic_stream.start()
-            logger.info(
-                "Mic stream started (device=%s)", mic_device or "default"
-            )
+            logger.info("Mic stream started (device=%s)", mic_device or "default")
         except Exception as exc:
-            logger.exception("Failed to open mic stream")
-            bus.emit(
-                ErrorOccurred(
-                    source="audio_capture",
-                    message=f"Mic stream error: {exc}",
-                    recoverable=False,
-                )
-            )
+            logger.exception("Failed to open mic")
+            bus.emit(ErrorOccurred("audio_capture", f"Mic error: {exc}", False))
             return
 
+        # Open Loopback
+        loopback_stream = None
         try:
             lb_device = self._settings.loopback_device_id
             if lb_device is not None:
-                loopback_stream = sd.InputStream(
-                    device=lb_device,
-                    samplerate=SAMPLE_RATE,
-                    channels=CHANNELS,
-                    dtype="float32",
-                    callback=loopback_callback,
-                    blocksize=SAMPLE_RATE,
-                )
-                loopback_stream.start()
+                # Try 16kHz first, if fails, query native rate
+                try:
+                    loopback_stream = sd.InputStream(
+                        device=lb_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
+                        dtype="float32", callback=loopback_callback, blocksize=SAMPLE_RATE
+                    )
+                    loopback_stream.start()
+                    lb_rate = SAMPLE_RATE
+                except Exception:
+                    # Fallback: Query native rate
+                    dev_info = sd.query_devices(lb_device, 'input')
+                    lb_rate = int(dev_info['default_samplerate'])
+                    logger.info("Retrying loopback at native rate: %d Hz", lb_rate)
+                    loopback_stream = sd.InputStream(
+                        device=lb_device, samplerate=lb_rate, channels=CHANNELS,
+                        dtype="float32", callback=loopback_callback, blocksize=lb_rate
+                    )
+                    loopback_stream.start()
+                
                 has_loopback = True
-                logger.info("Loopback stream started (device=%s)", lb_device)
+                logger.info("Loopback stream started (native rate: %d Hz)", lb_rate)
         except Exception as exc:
-            logger.warning(
-                "Loopback unavailable (device=%s): %s — using mic only",
-                self._settings.loopback_device_id,
-                exc,
-            )
-            bus.emit(
-                ErrorOccurred(
-                    source="audio_capture",
-                    message=f"Loopback unavailable: {exc}",
-                    recoverable=True,
-                )
-            )
+            logger.warning("Loopback failed: %s", exc)
 
-        # Capture loop
         try:
             while self._running:
-                # Sleep for chunk duration
                 self.msleep(CHUNK_DURATION_S * 1000)
+                if not self._running: break
 
-                if not self._running:
-                    break
-
-                # Drain mic buffer
+                # Drain and mix
                 with mic_lock:
-                    if mic_buffer:
-                        mic_audio = np.concatenate(mic_buffer)
-                        mic_buffer.clear()
-                    else:
-                        mic_audio = np.zeros(samples_per_chunk, dtype=np.float32)
-
-                # Drain loopback buffer
+                    mic_audio = np.concatenate(mic_buffer) if mic_buffer else np.zeros(samples_per_chunk, dtype=np.float32)
+                    mic_buffer.clear()
+                
+                lb_audio = None
                 if has_loopback:
                     with loopback_lock:
                         if loopback_buffer:
                             lb_audio = np.concatenate(loopback_buffer)
                             loopback_buffer.clear()
                         else:
-                            lb_audio = np.zeros(
-                                samples_per_chunk, dtype=np.float32
-                            )
-                else:
-                    lb_audio = None
+                            lb_audio = np.zeros(int(lb_rate * CHUNK_DURATION_S), dtype=np.float32)
+                
+                # Resample loopback if needed
+                if lb_audio is not None and lb_rate != SAMPLE_RATE:
+                    # Basic linear resampling for performance (whisper is resilient)
+                    xp = np.linspace(0, CHUNK_DURATION_S, len(lb_audio))
+                    x_new = np.linspace(0, CHUNK_DURATION_S, samples_per_chunk)
+                    lb_audio = np.interp(x_new, xp, lb_audio).astype(np.float32)
 
                 # Mix
                 if lb_audio is not None:
-                    # Match lengths
-                    min_len = min(len(mic_audio), len(lb_audio))
+                    min_len = min(len(mic_audio), len(lb_audio), samples_per_chunk)
                     mixed = (mic_audio[:min_len] + lb_audio[:min_len]) / 2.0
                 else:
-                    mixed = mic_audio
+                    mixed = mic_audio[:samples_per_chunk]
 
-                # Silence gate
-                if _rms(mixed) < SILENCE_THRESHOLD:
-                    logger.debug("Chunk below silence threshold — skipping")
-                    continue
+                if _rms(mixed) < SILENCE_THRESHOLD: continue
 
-                # Convert to WAV bytes and emit
                 wav_bytes = _float32_to_wav_bytes(mixed)
-                bus.emit(
-                    AudioChunkReady(
-                        audio=wav_bytes,
-                        length_ms=CHUNK_DURATION_S * 1000,
-                    )
-                )
-                logger.debug("Emitted AudioChunkReady (%d bytes)", len(wav_bytes))
+                bus.emit(AudioChunkReady(audio=wav_bytes, length_ms=CHUNK_DURATION_S * 1000))
 
         finally:
-            if mic_stream is not None:
+            if mic_stream:
                 mic_stream.stop()
                 mic_stream.close()
-            if loopback_stream is not None:
+            if loopback_stream:
                 loopback_stream.stop()
                 loopback_stream.close()
             logger.info("Audio capture stopped")
@@ -229,6 +187,7 @@ class AudioThread(QThread):
     def stop(self) -> None:
         """Signal the capture loop to stop."""
         self._running = False
+        self.quit() # Stop the QThread event loop
 
 
 class AudioCaptureManager:

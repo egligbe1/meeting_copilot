@@ -43,8 +43,9 @@ def list_devices() -> list[AudioDevice]:
         is_loopback = False
         if sys.platform == "win32":
             # WASAPI loopback devices have 'WASAPI' in host API name
-            # and often contain 'Loopback' in device name
-            if "wasapi" in host_api_name.lower():
+            # AND contain 'loopback' in device name (standard for Windows)
+            name_lower = dev_dict.get("name", "").lower()
+            if "wasapi" in host_api_name.lower() and "loopback" in name_lower:
                 is_loopback = True
 
         devices.append(
