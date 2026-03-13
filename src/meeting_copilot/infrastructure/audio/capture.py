@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16_000  # 16 kHz
 CHANNELS = 1  # mono
 CHUNK_DURATION_S = 15  # seconds per chunk
-SILENCE_THRESHOLD = 0.003  # RMS below this is silence
+SILENCE_THRESHOLD = 0.001  # extremely sensitive
 
 
 def _float32_to_wav_bytes(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -158,15 +158,31 @@ class AudioThread(QThread):
                 
                 # Resample loopback if needed
                 if lb_audio is not None and lb_rate != SAMPLE_RATE:
-                    # Basic linear resampling for performance (whisper is resilient)
                     xp = np.linspace(0, CHUNK_DURATION_S, len(lb_audio))
                     x_new = np.linspace(0, CHUNK_DURATION_S, samples_per_chunk)
                     lb_audio = np.interp(x_new, xp, lb_audio).astype(np.float32)
 
-                # Mix
+                # Diagnostic levels
+                mic_rms = _rms(mic_audio)
+                lb_rms = _rms(lb_audio) if lb_audio is not None else 0.0
+                
+                if mic_rms > SILENCE_THRESHOLD or lb_rms > SILENCE_THRESHOLD:
+                    logger.info("Levels - Mic: %.4f, Loopback: %.4f", mic_rms, lb_rms)
+
+                # Dynamic Mix: Only average if both are active, otherwise take the active one
                 if lb_audio is not None:
                     min_len = min(len(mic_audio), len(lb_audio), samples_per_chunk)
-                    mixed = (mic_audio[:min_len] + lb_audio[:min_len]) / 2.0
+                    # If only one has signal, use it at 1.0 gain. 
+                    # If both have signal, mix at 0.7 each to avoid peaking but keep volume high.
+                    m_signal = mic_rms > SILENCE_THRESHOLD
+                    l_signal = lb_rms > SILENCE_THRESHOLD
+                    
+                    if m_signal and l_signal:
+                        mixed = (mic_audio[:min_len] * 0.7) + (lb_audio[:min_len] * 0.7)
+                    elif l_signal:
+                        mixed = lb_audio[:min_len]
+                    else:
+                        mixed = mic_audio[:min_len]
                 else:
                     mixed = mic_audio[:samples_per_chunk]
 
