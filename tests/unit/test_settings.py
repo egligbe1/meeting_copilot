@@ -19,11 +19,11 @@ class TestSettings:
     def test_defaults(self) -> None:
         s = Settings()
         assert s.mic_device_id is None
-        assert s.loopback_device_id is None
+        assert s.loopback_device_id == -1
         assert s.groq_model_stt == "whisper-large-v3-turbo"
         assert s.groq_model_llm == "meta-llama/llama-4-scout-17b-16e-instruct"
-        assert s.word_trigger == 80
-        assert s.context_window_minutes == 3
+        assert s.word_trigger == 150
+        assert s.context_window_minutes == 10
         assert s.overlay_x == -1
         assert s.overlay_y == -1
         assert s.overlay_opacity == 0.92

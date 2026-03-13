@@ -89,35 +89,6 @@ class SessionLogger:
             logger.exception("Failed to write questions")
 
     # ------------------------------------------------------------------
-    # Data Retrieval & Summary
-    # ------------------------------------------------------------------
-
-    def get_full_transcript(self) -> str:
-        """Read and return the entire transcript file content."""
-        if self._transcript_path is None or not self._transcript_path.exists():
-            return ""
-
-        try:
-            return self._transcript_path.read_text(encoding="utf-8")
-        except OSError:
-            logger.exception("Failed to read full transcript")
-            return ""
-
-    def save_summary(self, summary_md: str) -> Path | None:
-        """Write the final AI summary to ``summary.md`` in the session dir."""
-        if self._session_dir is None:
-            return None
-
-        summary_path = self._session_dir / "summary.md"
-        try:
-            summary_path.write_text(summary_md, encoding="utf-8")
-            logger.info("Summary saved to %s", summary_path)
-            return summary_path
-        except OSError:
-            logger.exception("Failed to save summary")
-            return None
-
-    # ------------------------------------------------------------------
     # Utility
     # ------------------------------------------------------------------
 

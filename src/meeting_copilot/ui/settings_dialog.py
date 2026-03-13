@@ -124,11 +124,15 @@ class SettingsDialog(QDialog):
         # Loopback Device
         self.combo_lb = QComboBox()
         self.combo_lb.addItem("None", None)
+        self.combo_lb.addItem("Auto (Active Output)", -1)
         for i, dev in enumerate(devices):
             if dev["is_loopback"]:
                 self.combo_lb.addItem(dev["name"], dev["id"])
                 if dev["id"] == self._settings.loopback_device_id:
                     self.combo_lb.setCurrentIndex(self.combo_lb.count() - 1)
+        
+        if self._settings.loopback_device_id == -1:
+            self.combo_lb.setCurrentIndex(1)  # Index of "Auto"
 
         layout.addRow("System Audio (Loopback):", self.combo_lb)
         

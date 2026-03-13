@@ -27,8 +27,3 @@ docx_content.txt
 
 # Environment
 .env
-
-# Test artifacts
-.pytest_cache/
-test_output.txt
-tests_output.txt

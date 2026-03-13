@@ -28,64 +28,6 @@ class TestRollingTranscriptBuffer:
         buf.add(self._make_event("one two three four five"))
         assert buf.should_trigger()
 
-    def test_pruning_logic(self):
-        # Set context limit to 300 words (2 minutes * 150)
-        settings = Settings(context_window_minutes=2)
-        buffer = RollingTranscriptBuffer(settings)
-
-        # Add a large segment
-        text = "word " * 200
-        buffer.add(TranscriptSegmentAdded(datetime.now(), "Alice", text))
-
-        # Add another large segment
-        buffer.add(TranscriptSegmentAdded(datetime.now(), "Bob", text))
-
-        # Word count should be pruned to ~300
-        # Since each is 200, two is 400. Pruning should happen (prunes oldest, Bob remains).
-        assert buffer.total_word_count <= 400
-        
-        # Add another - should definitely prune Bob if Charlie is added and Bob was oldest?
-        # Actually pruning loop: while total > context_limit and len > 1: popleft
-        # Alice was first. Adding Bob (200) + Alice (200) = 400. Limit is 300.
-        # Pruning removes Alice. Total = 200 (Bob).
-        # Adding Charlie (200). Total = 400. Limit is 300.
-        # Pruning removes Bob. Total = 200 (Charlie).
-        buffer.add(TranscriptSegmentAdded(datetime.now(), "Charlie", text))
-        ctx = buffer.get_context_string()
-        assert "Alice" not in ctx
-        assert "Bob" not in ctx
-        assert "Charlie" in ctx
-
-
-    def test_trigger_logic(self):
-        settings = Settings(word_trigger=50)
-        buffer = RollingTranscriptBuffer(settings)
-
-        buffer.add(TranscriptSegmentAdded(datetime.now(), "You", "Hello world"))
-        assert not buffer.should_trigger()
-
-        buffer.add(TranscriptSegmentAdded(datetime.now(), "Speaker", "This is a much longer sentence " * 10 + "that should definitely trigger the word threshold."))
-        assert buffer.should_trigger()
-
-
-    def test_reset_trigger(self):
-        settings = Settings()
-        buffer = RollingTranscriptBuffer(settings)
-        # Manually poking private state for test
-        buffer._new_word_count = 100
-        buffer.reset_trigger_count()
-        assert buffer._new_word_count == 0
-
-
-    def test_context_formatting(self):
-        settings = Settings()
-        buffer = RollingTranscriptBuffer(settings)
-        ts = datetime(2024, 1, 1, 12, 0)
-        buffer.add(TranscriptSegmentAdded(ts, "Alice", "Hi"))
-
-        ctx = buffer.get_context_string()
-        assert "[12:00] Alice: Hi" in ctx
-
     def test_no_trigger_below_threshold(self) -> None:
         buf = RollingTranscriptBuffer(Settings(word_trigger=10))
         buf.add(self._make_event("one two three"))

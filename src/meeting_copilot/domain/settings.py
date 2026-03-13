@@ -14,7 +14,7 @@ class Settings:
 
     # Audio
     mic_device_id: int | None = field(default=None)
-    loopback_device_id: int | None = field(default=None)
+    loopback_device_id: int | None = field(default=-1)
 
     # Transcription
     groq_model_stt: str = field(default="whisper-large-v3-turbo")
@@ -23,8 +23,8 @@ class Settings:
     groq_model_llm: str = field(
         default="llama-3.3-70b-versatile"
     )
-    word_trigger: int = field(default=40)  # words before LLM call
-    context_window_minutes: int = field(default=3)
+    word_trigger: int = field(default=100)  # words before LLM call
+    context_window_minutes: int = field(default=10)
 
     # UI
     overlay_x: int = field(default=-1)  # -1 = auto bottom-right

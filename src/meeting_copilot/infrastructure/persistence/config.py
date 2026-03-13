@@ -57,17 +57,7 @@ class ConfigStore:
         # Filter to only known Settings fields
         valid_keys = {f.name for f in fields(Settings)}
         filtered = {k: v for k, v in data.items() if k in valid_keys}
-        settings = Settings(**filtered)
-
-        # Auto-detect WASAPI loopback on Windows if not set
-        if settings.loopback_device_id is None:
-            from meeting_copilot.infrastructure.audio.devices import find_wasapi_loopback  # noqa: PLC0415
-            loopback = find_wasapi_loopback()
-            if loopback:
-                logger.info("Auto-detected loopback device: %s (ID: %d)", loopback['name'], loopback['id'])
-                settings = Settings(**{**asdict(settings), 'loopback_device_id': loopback['id']})
-
-        return settings
+        return Settings(**filtered)
 
     # ------------------------------------------------------------------
     # Save

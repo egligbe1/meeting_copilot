@@ -65,10 +65,3 @@ class SettingsChanged:
 
     key: str
     value: object
-
-
-@dataclass(frozen=True)
-class SessionSummaryReady:
-    """Emitted by GroqLLMClient with the final post-meeting summary."""
-
-    summary_md: str

@@ -67,7 +67,7 @@ class OnboardingWizard(QWizard):
         new_settings = replace(
             self._settings,
             mic_device_id=mic_id if mic_id != -1 else None,
-            loopback_device_id=lb_id if lb_id != -1 else None,
+            loopback_device_id=lb_id, # Preserve -1 for Auto, None for Disabled
         )
         self._config_store.save(new_settings)
         

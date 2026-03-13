@@ -15,21 +15,18 @@ from meeting_copilot.domain.settings import Settings
 
 
 class RollingTranscriptBuffer:
-    """Rolling window of transcript segments with LLM trigger logic.
-    
-    Maintains a strict word-count window by pruning old segments.
-    """
+    """Rolling window of transcript segments with LLM trigger logic."""
 
     def __init__(self, settings: Settings) -> None:
-        self._buffer: deque[TranscriptSegment] = deque()
+        # Approximate max segments: ~2 per second of context window
+        max_segments = settings.context_window_minutes * 60 * 2
+        self._buffer: deque[TranscriptSegment] = deque(maxlen=max_segments)
         self._new_word_count = 0
         self._word_trigger = settings.word_trigger
-        # approx 100 words per minute for context calculation
-        self._context_limit = settings.context_window_minutes * 150
         self._lock = threading.Lock()
 
     def add(self, event: TranscriptSegmentAdded) -> None:
-        """Add a transcript segment and prune buffer to stay within context limit."""
+        """Add a transcript segment from an event and track new words."""
         segment = TranscriptSegment(
             timestamp=event.timestamp,
             speaker=event.speaker,
@@ -38,14 +35,6 @@ class RollingTranscriptBuffer:
         with self._lock:
             self._buffer.append(segment)
             self._new_word_count += segment.word_count
-            self._prune()
-
-    def _prune(self) -> None:
-        """Prune oldest segments if total word count exceeds limit."""
-        total = sum(seg.word_count for seg in self._buffer)
-        while total > self._context_limit and len(self._buffer) > 1:
-            removed = self._buffer.popleft()
-            total -= removed.word_count
 
     def should_trigger(self) -> bool:
         """Return True if enough new words have accumulated for an LLM call."""
@@ -62,12 +51,12 @@ class RollingTranscriptBuffer:
             return "\n".join(lines)
 
     def reset_trigger_count(self) -> None:
-        """Reset the new-word counter."""
+        """Reset the new-word counter after dispatching an LLM request."""
         with self._lock:
             self._new_word_count = 0
 
     @property
     def total_word_count(self) -> int:
-        """Total words currently in the buffer."""
+        """Total words currently in the buffer (for context reporting)."""
         with self._lock:
             return sum(seg.word_count for seg in self._buffer)
