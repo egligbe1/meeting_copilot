@@ -129,7 +129,7 @@ class Orchestrator(QObject):
         self.buffer.add(event)
         self.logger.on_segment(event)
 
-        # Print to terminal (useful for Phase 2/3 terminal mode)
+        # Print to terminal
         print(f"[{event.timestamp:%H:%M:%S}] {event.speaker}: {event.text}")
 
         if self.buffer.should_trigger():
