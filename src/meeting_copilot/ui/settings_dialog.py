@@ -2,7 +2,7 @@
 
 Tabs:
     * API — Groq API key with validation.
-    * Audio — Input device selection (mic + loopback).
+    * Audio — System-audio loopback input selection.
     * Preferences — LLM word triggers, context window, overlay opacity.
 """
 
@@ -10,11 +10,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Any
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -43,7 +41,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Meeting Co-Pilot Settings")
+        self.setWindowTitle("Interview Co-Pilot Settings")
         self.setMinimumWidth(450)
         self._settings = settings
         self._config_store = ConfigStore()
@@ -51,16 +49,16 @@ class SettingsDialog(QDialog):
         self.init_ui()
 
     def init_ui(self) -> None:
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(16, 16, 16, 16)
-        self.layout.setSpacing(20)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(20)
 
         # Tabs
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_api_tab(), "API")
         self.tabs.addTab(self._build_audio_tab(), "Audio")
         self.tabs.addTab(self._build_prefs_tab(), "Preferences")
-        self.layout.addWidget(self.tabs)
+        root_layout.addWidget(self.tabs)
 
         # Bottom Buttons
         self.buttons = QHBoxLayout()
@@ -73,7 +71,7 @@ class SettingsDialog(QDialog):
         self.buttons.addStretch()
         self.buttons.addWidget(self.btn_cancel)
         self.buttons.addWidget(self.btn_save)
-        self.layout.addLayout(self.buttons)
+        root_layout.addLayout(self.buttons)
 
     # --- Tab Builders ---
 
@@ -110,22 +108,11 @@ class SettingsDialog(QDialog):
 
         devices = list_devices()
 
-        # Mic Device
-        self.combo_mic = QComboBox()
-        self.combo_mic.addItem("System Default", None)
-        for i, dev in enumerate(devices):
-            if not dev["is_loopback"]:
-                self.combo_mic.addItem(dev["name"], dev["id"])
-                if dev["id"] == self._settings.mic_device_id:
-                    self.combo_mic.setCurrentIndex(self.combo_mic.count() - 1)
-
-        layout.addRow("Microphone:", self.combo_mic)
-
         # Loopback Device
         self.combo_lb = QComboBox()
         self.combo_lb.addItem("None", None)
         self.combo_lb.addItem("Auto (Active Output)", -1)
-        for i, dev in enumerate(devices):
+        for dev in devices:
             if dev["is_loopback"]:
                 self.combo_lb.addItem(dev["name"], dev["id"])
                 if dev["id"] == self._settings.loopback_device_id:
@@ -136,7 +123,10 @@ class SettingsDialog(QDialog):
 
         layout.addRow("System Audio (Loopback):", self.combo_lb)
         
-        hint = QLabel("On Windows, look for 'WASAPI' devices. On macOS, use 'BlackHole'.")
+        hint = QLabel(
+            "Only this system-audio input is transcribed; your microphone is "
+            "never included. On macOS, route meeting audio through BlackHole."
+        )
         hint.setStyleSheet("color: #9CA3AF; font-size: 11px;")
         layout.addRow("", hint)
 
@@ -169,9 +159,17 @@ class SettingsDialog(QDialog):
 
         # Meeting Context
         self.edit_context = QLineEdit()
-        self.edit_context.setPlaceholderText("e.g. Budget review / Interview / Project sync")
+        self.edit_context.setPlaceholderText("Role, résumé highlights, projects, and truthful metrics")
         self.edit_context.setText(self._settings.meeting_context)
         layout.addRow("Global Context:", self.edit_context)
+
+        self.combo_focus = QComboBox()
+        self.combo_focus.addItem("Data Engineering", "data_engineering")
+        self.combo_focus.addItem("Data Architecture", "data_architecture")
+        self.combo_focus.addItem("Behavioral", "behavioral")
+        index = self.combo_focus.findData(self._settings.interview_focus)
+        self.combo_focus.setCurrentIndex(max(index, 0))
+        layout.addRow("Interview Focus:", self.combo_focus)
 
         return widget
 
@@ -185,17 +183,17 @@ class SettingsDialog(QDialog):
 
         new_settings = replace(
             self._settings,
-            mic_device_id=self.combo_mic.currentData(),
             loopback_device_id=self.combo_lb.currentData(),
             word_trigger=self.spin_trigger.value(),
             context_window_minutes=self.spin_window.value(),
             overlay_opacity=self.slider_opacity.value() / 100.0,
             meeting_context=self.edit_context.text().strip(),
+            interview_focus=str(self.combo_focus.currentData()),
         )
 
         # Emit changes via EventBus
         bus = get_bus()
-        for field_name in ["mic_device_id", "loopback_device_id", "word_trigger", "context_window_minutes", "overlay_opacity", "meeting_context"]:
+        for field_name in ["loopback_device_id", "word_trigger", "context_window_minutes", "overlay_opacity", "meeting_context", "interview_focus"]:
             old_val = getattr(self._settings, field_name)
             new_val = getattr(new_settings, field_name)
             if old_val != new_val:

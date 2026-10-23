@@ -11,8 +11,6 @@ import logging
 import signal
 import sys
 
-from PySide6.QtCore import QCoreApplication
-
 from meeting_copilot.application.orchestrator import Orchestrator
 from meeting_copilot.infrastructure.persistence.config import ConfigStore
 
@@ -26,7 +24,7 @@ logging.basicConfig(
 def main() -> None:
     """Application entry point."""
     parser = argparse.ArgumentParser(
-        description="Meeting Co-Pilot — Real-time AI question advisor"
+        description="Interview Co-Pilot — Real-time answer guidance"
     )
     parser.add_argument(
         "--list-devices",
@@ -89,13 +87,14 @@ def main() -> None:
     # Graceful shutdown on Ctrl+C
     def handle_sigint(*_args: object) -> None:
         print("\nStopping...")
-        orchestrator.stop()
+        orchestrator.shutdown()
         app.quit()
 
     signal.signal(signal.SIGINT, handle_sigint)
+    app.aboutToQuit.connect(orchestrator.shutdown)
 
     # Start listening
-    print("Meeting Co-Pilot is listening... (Ctrl+C to stop)")
+    print("Interview Co-Pilot is listening... (Ctrl+C to stop)")
     orchestrator.start()
     
     overlay.show()

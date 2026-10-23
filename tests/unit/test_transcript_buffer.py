@@ -51,3 +51,14 @@ class TestRollingTranscriptBuffer:
         buf.add(self._make_event("one two"))
         buf.add(self._make_event("three four five"))
         assert buf.total_word_count == 5
+
+    def test_clear_discards_context_and_resets_trigger(self) -> None:
+        buf = RollingTranscriptBuffer(Settings(word_trigger=3))
+        buf.add(self._make_event("one two three"))
+        assert buf.should_trigger()
+
+        buf.clear()
+
+        assert buf.get_context_string() == ""
+        assert buf.total_word_count == 0
+        assert not buf.should_trigger()

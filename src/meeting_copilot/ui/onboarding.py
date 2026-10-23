@@ -40,7 +40,7 @@ class OnboardingWizard(QWizard):
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Meeting Co-Pilot Setup")
+        self.setWindowTitle("Interview Co-Pilot Setup")
         self.setFixedSize(550, 450)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         
@@ -79,14 +79,14 @@ class WelcomePage(QWizardPage):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setTitle("Welcome to Meeting Co-Pilot")
-        self.setSubTitle("Real-time AI assistance for your professional meetings.")
+        self.setTitle("Welcome to Interview Co-Pilot")
+        self.setSubTitle("Real-time, concise answer guidance for interviews.")
 
         layout = QVBoxLayout(self)
         info = QLabel(
-            "This application listens to your conversations and suggests "
-            "sharp, contextually relevant questions to help you stay "
-            "engaged and informed.\n\n"
+            "This application listens to interview audio and offers "
+            "concise answer guidance for data engineering, data architecture, "
+            "and behavioral questions.\n\n"
             "We'll need a free Groq API key and your audio device "
             "preferences to get started."
         )
@@ -154,8 +154,7 @@ class AudioSetupPage(QWizardPage):
         self.registerField("mic_id", self.combo_mic, "currentData")
         self.registerField("lb_id", self.combo_lb, "currentData")
 
-        layout.addRow("", QLabel("\nOn Windows, WASAPI Loopback will be used to record others."))
-        layout.addRow("", QLabel("On macOS, please ensure BlackHole is installed."))
+        layout.addRow("", QLabel("\nOn macOS, install BlackHole and route your call through a Multi-Output Device in Audio MIDI Setup."))
 
 
 class ReadyPage(QWizardPage):
@@ -168,7 +167,7 @@ class ReadyPage(QWizardPage):
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
-            "Meeting Co-Pilot will now run in the background.\n\n"
+            "Interview Co-Pilot will now run in the background.\n\n"
             "You can find the controls and settings in the system tray "
             "at any time."
         ))

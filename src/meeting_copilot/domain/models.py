@@ -1,4 +1,4 @@
-"""Domain value objects — TranscriptSegment and QuestionCard.
+"""Domain value objects — TranscriptSegment and AnswerGuidance.
 
 These are simple data containers used across the application.
 They have no dependencies on infrastructure or UI layers.
@@ -30,9 +30,11 @@ class TranscriptSegment:
 
 
 @dataclass(frozen=True)
-class QuestionCard:
-    """A suggested question to display in the overlay."""
+class AnswerGuidance:
+    """A concise answer and optional prompt to clarify a question."""
 
-    question: str
+    answer: str
+    talking_points: tuple[str, ...] = ()
+    follow_up: str | None = None
     generated_at: datetime = field(default_factory=datetime.now)
     dismissed: bool = field(default=False)

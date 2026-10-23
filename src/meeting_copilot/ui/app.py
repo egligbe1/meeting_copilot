@@ -143,7 +143,7 @@ def build_qapplication(settings: Settings) -> QApplication:
     if app is None:
         app = QApplication(sys.argv)
 
-    app.setApplicationName("Meeting Co-Pilot")
+    app.setApplicationName("Interview Co-Pilot")
     app.setApplicationVersion("0.1.0")
 
     # Dark palette

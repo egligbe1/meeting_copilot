@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PySide6.QtCore import QObject, Slot, Qt
-from PySide6.QtGui import QAction, QIcon, QPainter, QColor, QDesktopServices
-from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QApplication
+from PySide6.QtCore import QObject, Qt, Slot
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
 from meeting_copilot.application.event_bus import get_bus
 from meeting_copilot.domain.events import ListeningStateChanged
+from meeting_copilot.infrastructure.persistence.config import ConfigStore
 from meeting_copilot.infrastructure.persistence.session import SessionLogger
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class SystemTrayManager(QObject):
 
         # Create tray icon
         self.tray_icon = QSystemTrayIcon(self._generate_icon(), parent)
-        self.tray_icon.setToolTip("Meeting Co-Pilot")
+        self.tray_icon.setToolTip("Interview Co-Pilot")
 
         # Create menu
         self.menu = QMenu()
@@ -65,6 +66,7 @@ class SystemTrayManager(QObject):
 
         self.tray_icon.setContextMenu(self.menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
+        self.menu.aboutToShow.connect(self._sync_overlay_action)
 
         # Subscriptions
         get_bus().subscribe_qt(ListeningStateChanged, self._update_menu)
@@ -79,7 +81,7 @@ class SystemTrayManager(QObject):
 
     def _generate_icon(self) -> QIcon:
         """Generate a procedural teal circle icon."""
-        from PySide6.QtGui import QPixmap, QBrush # noqa: PLC0415
+        from PySide6.QtGui import QBrush, QPixmap  # noqa: PLC0415
         pixmap = QPixmap(32, 32)
         pixmap.fill(Qt.GlobalColor.transparent)
 
@@ -106,6 +108,12 @@ class SystemTrayManager(QObject):
         visible = not self._overlay.isVisible()
         self._overlay.setVisible(visible)
         self.act_show.setText("Hide Overlay" if visible else "Show Overlay")
+
+    @Slot()
+    def _sync_overlay_action(self) -> None:
+        self.act_show.setText(
+            "Hide Overlay" if self._overlay.isVisible() else "Show Overlay"
+        )
 
     @Slot()
     def _open_settings(self) -> None:

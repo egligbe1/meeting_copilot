@@ -21,9 +21,9 @@ class Settings:
 
     # LLM
     groq_model_llm: str = field(
-        default="llama-3.3-70b-versatile"
+        default="openai/gpt-oss-20b"
     )
-    word_trigger: int = field(default=100)  # words before LLM call
+    word_trigger: int = field(default=55)  # words before LLM call
     context_window_minutes: int = field(default=10)
 
     # UI
@@ -32,4 +32,5 @@ class Settings:
     overlay_opacity: float = field(default=0.92)
 
     # Meta
-    meeting_context: str = field(default="")  # optional freetext
+    meeting_context: str = field(default="")  # role, company, resume highlights
+    interview_focus: str = field(default="data_engineering")

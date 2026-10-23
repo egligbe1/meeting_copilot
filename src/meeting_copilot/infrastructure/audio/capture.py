@@ -1,34 +1,37 @@
-"""AudioCaptureManager + AudioThread — dual-stream audio capture.
+"""AudioCaptureManager + AudioThread — system-audio speech capture.
 
-Records microphone + system audio (WASAPI loopback on Windows, BlackHole
-on macOS) simultaneously at 16 kHz.  Produces AudioChunkReady events every
-15 seconds.
+Captures only system audio (WASAPI loopback on Windows, BlackHole on macOS)
+at 16 kHz. Microphone input is never sent for transcription.
+Emits speech segments after a brief pause.
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import struct
 import threading
 import wave
+from collections import deque
 from typing import Any
 
 import numpy as np
-import sounddevice as sd
+import sounddevice as sd  # type: ignore[import-untyped]
 from PySide6.QtCore import QObject, QThread
 
 from meeting_copilot.application.event_bus import get_bus
 from meeting_copilot.domain.events import AudioChunkReady, ErrorOccurred
 from meeting_copilot.domain.settings import Settings
-from meeting_copilot.infrastructure.audio.devices import find_best_loopback, list_devices
+from meeting_copilot.infrastructure.audio.devices import find_best_loopback
 
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16_000  # 16 kHz
 CHANNELS = 1  # mono
-CHUNK_DURATION_S = 10  # seconds per chunk
-SILENCE_THRESHOLD = 0.001  # Lowered: RMS below this is silence
+SILENCE_THRESHOLD = 0.005
+POLL_INTERVAL_MS = 100
+END_OF_SPEECH_S = 0.8
+PRE_ROLL_S = 0.2
+MAX_SEGMENT_S = 30
 
 
 def _float32_to_wav_bytes(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -54,49 +57,92 @@ def _rms(audio: np.ndarray) -> float:
     return float(np.sqrt(np.mean(audio**2)))
 
 
-class AudioThread(QThread):
-    """Background QThread that captures audio and emits AudioChunkReady events.
+class _SpeechSegmenter:
+    """Collect audio into segments and close them after a short pause."""
 
-    Opens up to two sounddevice input streams (microphone + loopback).
-    Buffers 15 seconds, mixes, applies silence gate, and emits.
+    def __init__(self) -> None:
+        self._pre_roll: deque[np.ndarray] = deque()
+        self._pre_roll_samples = 0
+        self._frames: list[np.ndarray] = []
+        self._sample_count = 0
+        self._silence_samples = 0
+
+    def add(self, audio: np.ndarray) -> np.ndarray | None:
+        """Add one audio frame and return a completed speech segment, if any."""
+        voiced = _rms(audio) >= SILENCE_THRESHOLD
+        if self._frames:
+            self._frames.append(audio)
+            self._sample_count += len(audio)
+            self._silence_samples = (
+                0 if voiced else self._silence_samples + len(audio)
+            )
+            if (
+                self._silence_samples >= SAMPLE_RATE * END_OF_SPEECH_S
+                or self._sample_count >= SAMPLE_RATE * MAX_SEGMENT_S
+            ):
+                frames = self._frames
+                sample_count = self._sample_count
+                self._reset()
+                return np.concatenate(frames) if sample_count >= SAMPLE_RATE // 4 else None
+        elif voiced:
+            self._frames = [*self._pre_roll, audio]
+            self._sample_count = self._pre_roll_samples + len(audio)
+            self._pre_roll.clear()
+            self._pre_roll_samples = 0
+        else:
+            self._pre_roll.append(audio)
+            self._pre_roll_samples += len(audio)
+            while self._pre_roll_samples > SAMPLE_RATE * PRE_ROLL_S:
+                removed = self._pre_roll.popleft()
+                self._pre_roll_samples -= len(removed)
+        return None
+
+    def _reset(self) -> None:
+        self._pre_roll.clear()
+        self._pre_roll_samples = 0
+        self._frames = []
+        self._sample_count = 0
+        self._silence_samples = 0
+
+    def clear(self) -> None:
+        """Discard any partial utterance and retained pre-roll."""
+        self._reset()
+
+
+class AudioThread(QThread):
+    """Capture system audio and emit speech segments for transcription.
+
+    Opens only the selected loopback input. No microphone stream is opened.
     """
 
     def __init__(
         self,
         settings: Settings,
         parent: Any = None,
+        context_generation: int = 0,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._running = False
+        self._context_generation = context_generation
+        self._context_lock = threading.Lock()
+
+    def set_context_generation(self, generation: int) -> None:
+        """Mark buffered and future audio with the new context generation."""
+        with self._context_lock:
+            self._context_generation = generation
 
     def run(self) -> None:  # noqa: C901 — complexity acceptable for audio loop
         """Main capture loop — runs on a background thread."""
         self._running = True
         bus = get_bus()
-        samples_per_chunk = SAMPLE_RATE * CHUNK_DURATION_S
+        poll_samples = SAMPLE_RATE * POLL_INTERVAL_MS // 1000
 
-        # Buffers
-        mic_buffer: list[np.ndarray] = []
         loopback_buffer: list[np.ndarray] = []
-        mic_lock = threading.Lock()
         loopback_lock = threading.Lock()
+        segmenter = _SpeechSegmenter()
+        active_generation = self._context_generation
 
-        has_loopback = False
-
-        # --- Mic callback ---
-        def mic_callback(
-            indata: np.ndarray,
-            frames: int,
-            time_info: Any,
-            status: sd.CallbackFlags,
-        ) -> None:
-            if status:
-                logger.debug("Mic stream status: %s", status)
-            with mic_lock:
-                mic_buffer.append(indata[:, 0].copy())
-
-        # --- Loopback callback ---
         def loopback_callback(
             indata: np.ndarray,
             frames: int,
@@ -108,11 +154,17 @@ class AudioThread(QThread):
             with loopback_lock:
                 loopback_buffer.append(indata[:, 0].copy())
 
-        def open_input_stream(device_id: int | None, callback_fn: Any) -> tuple[sd.InputStream, int]:
+        def open_input_stream(
+            device_id: int, callback_fn: Any
+        ) -> tuple[sd.InputStream, int]:
             """Try to open a stream at native rate, or fall back to 16k/44.1k/48k."""
             info = sd.query_devices(device_id, "input")
-            native_rate = int(info.get("default_samplerate", SAMPLE_RATE)) if info else SAMPLE_RATE
-            
+            native_rate = (
+                int(info.get("default_samplerate", SAMPLE_RATE))
+                if info
+                else SAMPLE_RATE
+            )
+
             rates_to_try = [native_rate, 44100, 48000, 16000]
             if native_rate in rates_to_try:
                 rates_to_try.remove(native_rate)
@@ -127,7 +179,7 @@ class AudioThread(QThread):
                         channels=CHANNELS,
                         dtype="float32",
                         callback=callback_fn,
-                        blocksize=0  # PortAudio decides optimal size
+                        blocksize=0,
                     )
                     return stream, rate
                 except Exception as e:
@@ -135,156 +187,113 @@ class AudioThread(QThread):
                     continue
             raise last_exc or Exception("Could not open stream at any rate")
 
-        # Open streams
-        mic_stream = None
+        # Resolve only the system-audio input; never fall back to the mic.
         loopback_stream = None
-
         try:
-            mic_device = self._settings.mic_device_id
-            mic_stream, mic_native_rate = open_input_stream(mic_device, mic_callback)
-            mic_stream.start()
+            lb_device = self._settings.loopback_device_id
+            if lb_device == -1:
+                lb_info = find_best_loopback()
+                if lb_info:
+                    lb_device = lb_info["id"]
+                    logger.info(
+                        "Auto-resolved system audio to: %s (API: %s)",
+                        lb_info["name"],
+                        lb_info["host_api"],
+                    )
+                else:
+                    lb_device = None
+
+            if lb_device is None:
+                raise RuntimeError(
+                    "No system-audio input is selected. Select BlackHole (macOS) "
+                    "or a loopback device in Settings → Audio. Microphone audio "
+                    "is not used for transcription."
+                )
+
+            loopback_stream, lb_native_rate = open_input_stream(
+                lb_device, loopback_callback
+            )
+            loopback_stream.start()
             logger.info(
-                "Mic stream started (device=%s, rate=%d)", 
-                mic_device if mic_device is not None else "default", mic_native_rate
+                "System-audio stream started (device=%s, rate=%d)",
+                lb_device,
+                lb_native_rate,
             )
         except Exception as exc:
-            logger.exception("Failed to open mic stream")
+            logger.warning(
+                "System-audio input unavailable (device=%s)",
+                self._settings.loopback_device_id,
+            )
             bus.emit(
                 ErrorOccurred(
                     source="audio_capture",
-                    message=f"Mic stream error: {exc}",
-                    recoverable=False,
+                    message=str(exc),
+                    recoverable=True,
                 )
             )
             return
 
-        try:
-            lb_device = self._settings.loopback_device_id
-            if lb_device == -1:
-                # Resolve Auto loopback with heuristics
-                lb_info = find_best_loopback()
-                if lb_info:
-                    lb_device = lb_info["id"]
-                    logger.info("Auto-resolved loopback to: %s (API: %s)", lb_info["name"], lb_info["host_api"])
-                else:
-                    lb_device = None
-
-            if lb_device is not None:
-                # Attempt to open loopback. If it's a candidate list, we might try others, 
-                # but for now we follow find_best_loopback suggestion.
-                # If it fails, we catch it and log a warning.
-                try:
-                    loopback_stream, lb_native_rate = open_input_stream(lb_device, loopback_callback)
-                    loopback_stream.start()
-                    has_loopback = True
-                    logger.info(
-                        "Loopback stream started (device=%s, rate=%d)", 
-                        lb_device, lb_native_rate
-                    )
-                except Exception as inner_exc:
-                    logger.warning("Failed to open resolved loopback %s: %s", lb_device, inner_exc)
-                    # If it was an auto-res, we could try falling back to the next candidate
-                    # but find_best_loopback already picked the best.
-                    raise inner_exc
-        except Exception as exc:
-            logger.warning(
-                "Loopback unavailable (device=%s): %s — using mic only",
-                self._settings.loopback_device_id,
-                exc,
+        def resample(audio: np.ndarray, source_rate: int) -> np.ndarray:
+            if len(audio) == 0 or source_rate == SAMPLE_RATE:
+                return audio
+            target_samples = max(1, round(len(audio) * SAMPLE_RATE / source_rate))
+            source_positions = np.arange(len(audio)) / source_rate
+            target_positions = np.arange(target_samples) / SAMPLE_RATE
+            return np.asarray(
+                np.interp(target_positions, source_positions, audio),
+                dtype=np.float32,
             )
+
+        def emit_segment(audio: np.ndarray, generation: int) -> None:
+            peak = float(np.max(np.abs(audio)))
+            if peak > 0:
+                audio = audio * (0.95 / peak)
+            wav_bytes = _float32_to_wav_bytes(audio)
             bus.emit(
-                ErrorOccurred(
-                    source="audio_capture",
-                    message=f"Loopback unavailable: {exc}",
-                    recoverable=True,
+                AudioChunkReady(
+                    audio=wav_bytes,
+                    length_ms=round(len(audio) * 1000 / SAMPLE_RATE),
+                    context_generation=generation,
                 )
+            )
+            logger.debug(
+                "Emitted speech segment (%d ms, %d bytes)",
+                round(len(audio) * 1000 / SAMPLE_RATE),
+                len(wav_bytes),
             )
 
         # Capture loop
         try:
             while self._running:
-                # Sleep for chunk duration
-                self.msleep(CHUNK_DURATION_S * 1000)
+                self.msleep(POLL_INTERVAL_MS)
 
                 if not self._running:
                     break
 
-                # Drain mic buffer
-                with mic_lock:
-                    if mic_buffer:
-                        raw_mic_audio = np.concatenate(mic_buffer)
-                        mic_buffer.clear()
-                    else:
-                        raw_mic_audio = np.zeros(0, dtype=np.float32)
-
-                # Resample mic if needed
-                if len(raw_mic_audio) > 0 and mic_native_rate != SAMPLE_RATE:
-                    duration = len(raw_mic_audio) / mic_native_rate
-                    new_samples = int(duration * SAMPLE_RATE)
-                    x_old = np.linspace(0, duration, len(raw_mic_audio))
-                    x_new = np.linspace(0, duration, new_samples)
-                    mic_audio = np.interp(x_new, x_old, raw_mic_audio).astype(np.float32)
-                elif len(raw_mic_audio) > 0:
-                    mic_audio = raw_mic_audio
-                else:
-                    mic_audio = np.zeros(samples_per_chunk, dtype=np.float32)
-
-                # Drain and resample loopback buffer
-                if has_loopback:
+                with self._context_lock:
+                    context_generation = self._context_generation
+                if context_generation != active_generation:
+                    segmenter.clear()
                     with loopback_lock:
-                        if loopback_buffer:
-                            raw_lb_audio = np.concatenate(loopback_buffer)
-                            loopback_buffer.clear()
-                        else:
-                            raw_lb_audio = np.zeros(0, dtype=np.float32)
-                    
-                    if len(raw_lb_audio) > 0 and lb_native_rate != SAMPLE_RATE:
-                        duration = len(raw_lb_audio) / lb_native_rate
-                        new_samples = int(duration * SAMPLE_RATE)
-                        x_old = np.linspace(0, duration, len(raw_lb_audio))
-                        x_new = np.linspace(0, duration, new_samples)
-                        lb_audio = np.interp(x_new, x_old, raw_lb_audio).astype(np.float32)
-                    elif len(raw_lb_audio) > 0:
-                        lb_audio = raw_lb_audio
+                        loopback_buffer.clear()
+                    active_generation = context_generation
+
+                with loopback_lock:
+                    if loopback_buffer:
+                        raw_audio = np.concatenate(loopback_buffer)
+                        loopback_buffer.clear()
                     else:
-                        lb_audio = np.zeros(samples_per_chunk, dtype=np.float32)
-                else:
-                    lb_audio = None
+                        raw_audio = np.zeros(0, dtype=np.float32)
 
-                # Mix
-                if lb_audio is not None:
-                    # Match lengths
-                    min_len = min(len(mic_audio), len(lb_audio))
-                    # Additive mixing (sum) instead of averaging to keep signals strong
-                    mixed = mic_audio[:min_len] + lb_audio[:min_len]
-                else:
-                    mixed = mic_audio
+                system_audio = resample(raw_audio, lb_native_rate)
+                if len(system_audio) == 0:
+                    system_audio = np.zeros(poll_samples, dtype=np.float32)
 
-                # Peak Normalization: scale so max absolute amplitude is 0.95
-                # This ensures the STT engine gets a strong, consistent signal.
-                max_val = np.max(np.abs(mixed))
-                if max_val > 0:
-                    mixed = mixed * (0.95 / max_val)
-
-                # Silence gate
-                if _rms(mixed) < SILENCE_THRESHOLD:
-                    logger.debug("Chunk below silence threshold — skipping")
-                    continue
-
-                # Convert to WAV bytes and emit
-                wav_bytes = _float32_to_wav_bytes(mixed)
-                bus.emit(
-                    AudioChunkReady(
-                        audio=wav_bytes,
-                        length_ms=CHUNK_DURATION_S * 1000,
-                    )
-                )
-                logger.debug("Emitted AudioChunkReady (%d bytes)", len(wav_bytes))
+                completed_segment = segmenter.add(system_audio)
+                if completed_segment is not None:
+                    emit_segment(completed_segment, active_generation)
 
         finally:
-            if mic_stream is not None:
-                mic_stream.stop()
-                mic_stream.close()
             if loopback_stream is not None:
                 loopback_stream.stop()
                 loopback_stream.close()
@@ -300,6 +309,7 @@ class AudioCaptureManager:
 
     def __init__(self) -> None:
         self._thread: AudioThread | None = None
+        self._context_generation = 0
 
     def start(self, settings: Settings, parent: QObject | None = None) -> None:
         """Start audio capture on a background thread."""
@@ -307,7 +317,11 @@ class AudioCaptureManager:
             logger.warning("Audio capture already running")
             return
 
-        self._thread = AudioThread(settings, parent=parent)
+        self._thread = AudioThread(
+            settings,
+            parent=parent,
+            context_generation=self._context_generation,
+        )
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
         logger.info("AudioCaptureManager started")
@@ -324,3 +338,9 @@ class AudioCaptureManager:
             # to avoid premature destruction of the wrapper object
             self._thread = None
             logger.info("AudioCaptureManager stopped")
+
+    def clear_context(self, generation: int) -> None:
+        """Invalidate buffered audio and tag future capture with *generation*."""
+        self._context_generation = generation
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.set_context_generation(generation)

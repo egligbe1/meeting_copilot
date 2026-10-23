@@ -1,9 +1,9 @@
-"""SessionLogger — writes transcript + questions to timestamped session folders.
+"""SessionLogger — writes transcript + answer guidance to session folders.
 
 Session folder: ``~/.meeting-copilot/sessions/YYYY-MM-DD_HH-MM/``
 Files:
     * ``transcript.txt``  — appended in real time
-    * ``questions.txt``   — appended when QuestionsReady fires
+    * ``answer_guidance.txt`` — appended when AnswerReady fires
 """
 
 from __future__ import annotations
@@ -12,14 +12,14 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from meeting_copilot.domain.events import QuestionsReady, TranscriptSegmentAdded
+from meeting_copilot.domain.events import AnswerReady, TranscriptSegmentAdded
 
 logger = logging.getLogger(__name__)
 
 
 def _sessions_dir() -> Path:
     """Return the sessions root directory, creating it if needed."""
-    sessions = Path.home() / ".meeting-copilot" / "sessions"
+    sessions = Path.home() / ".interview-copilot" / "sessions"
     sessions.mkdir(parents=True, exist_ok=True)
     return sessions
 
@@ -30,7 +30,7 @@ class SessionLogger:
     def __init__(self) -> None:
         self._session_dir: Path | None = None
         self._transcript_path: Path | None = None
-        self._questions_path: Path | None = None
+        self._answers_path: Path | None = None
 
     @property
     def session_dir(self) -> Path | None:
@@ -48,7 +48,7 @@ class SessionLogger:
         self._session_dir.mkdir(parents=True, exist_ok=True)
 
         self._transcript_path = self._session_dir / "transcript.txt"
-        self._questions_path = self._session_dir / "questions.txt"
+        self._answers_path = self._session_dir / "answer_guidance.txt"
 
         logger.info("Session started: %s", self._session_dir)
         return self._session_dir
@@ -71,22 +71,25 @@ class SessionLogger:
         except OSError:
             logger.exception("Failed to write transcript segment")
 
-    def on_questions(self, event: QuestionsReady) -> None:
-        """Append generated questions to ``questions.txt``."""
-        if self._questions_path is None:
+    def on_answer(self, event: AnswerReady) -> None:
+        """Append generated answer guidance to ``answer_guidance.txt``."""
+        if self._answers_path is None:
             return
 
         time_str = datetime.now().strftime("%H:%M:%S")
         lines = [f"[{time_str}] — context: {event.context_word_count} words\n"]
-        for i, question in enumerate(event.questions, start=1):
-            lines.append(f"  {i}. {question}\n")
+        lines.append(f"Answer: {event.answer}\n")
+        for point in event.talking_points:
+            lines.append(f"  • {point}\n")
+        if event.follow_up:
+            lines.append(f"Clarify: {event.follow_up}\n")
         lines.append("\n")
 
         try:
-            with self._questions_path.open("a", encoding="utf-8") as f:
+            with self._answers_path.open("a", encoding="utf-8") as f:
                 f.writelines(lines)
         except OSError:
-            logger.exception("Failed to write questions")
+            logger.exception("Failed to write answer guidance")
 
     # ------------------------------------------------------------------
     # Utility

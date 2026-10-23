@@ -9,15 +9,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PySide6.QtCore import QObject, QThread, Slot
+from PySide6.QtCore import QObject, QThread
 
 from meeting_copilot.application.event_bus import get_bus, subscribe_qt
 from meeting_copilot.application.transcript_buffer import RollingTranscriptBuffer
 from meeting_copilot.domain.events import (
+    AnswerReady,
     AudioChunkReady,
+    ClearContextRequested,
+    ContextCleared,
     ErrorOccurred,
     ListeningStateChanged,
-    QuestionsReady,
     TranscriptSegmentAdded,
 )
 from meeting_copilot.domain.settings import Settings
@@ -37,34 +39,46 @@ class TranscriptionWorker(QThread):
         stt_client: GroqSTTClient,
         audio_bytes: bytes,
         speaker: str = "Meeting",
+        context_generation: int = 0,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
         self._stt = stt_client
         self._audio = audio_bytes
         self._speaker = speaker
+        self._context_generation = context_generation
 
     def run(self) -> None:
-        self._stt.transcribe(self._audio, self._speaker)
+        self._stt.transcribe(
+            self._audio,
+            self._speaker,
+            context_generation=self._context_generation,
+        )
 
 
 class AdvisorWorker(QThread):
-    """One-shot QThread that generates questions from transcript context."""
+    """One-shot QThread that generates answer guidance from transcript context."""
 
     def __init__(
         self,
         llm_client: GroqLLMClient,
         context: str,
         word_count: int,
+        context_generation: int,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
         self._llm = llm_client
         self._context = context
         self._word_count = word_count
+        self._context_generation = context_generation
 
     def run(self) -> None:
-        self._llm.generate_questions(self._context, self._word_count)
+        self._llm.generate_answer(
+            self._context,
+            self._word_count,
+            context_generation=self._context_generation,
+        )
 
 
 class Orchestrator(QObject):
@@ -74,6 +88,7 @@ class Orchestrator(QObject):
         super().__init__(parent)
         self._settings = settings
         self.buffer = RollingTranscriptBuffer(settings)
+        self._context_generation = 0
         self.capture = AudioCaptureManager()
         self.stt = GroqSTTClient(settings, api_key=api_key)
         self.llm = GroqLLMClient(settings, api_key=api_key)
@@ -87,9 +102,9 @@ class Orchestrator(QObject):
         # Use subscribe_qt for handlers that create QThread workers
         subscribe_qt(AudioChunkReady, self._on_chunk, parent=self)
         subscribe_qt(TranscriptSegmentAdded, self._on_segment, parent=self)
-        
-        bus.subscribe(QuestionsReady, self.logger.on_questions)
-        bus.subscribe(QuestionsReady, self._on_questions)
+        subscribe_qt(ClearContextRequested, self._on_clear_context, parent=self)
+
+        bus.subscribe(AnswerReady, self._on_answer_event)
         bus.subscribe(ErrorOccurred, self._on_error)
 
     # ------------------------------------------------------------------
@@ -109,6 +124,25 @@ class Orchestrator(QObject):
         get_bus().emit(ListeningStateChanged(is_listening=False))
         logger.info("Orchestrator stopped")
 
+    def shutdown(self) -> None:
+        """Stop capture and wait for API workers before Qt destroys their parent."""
+        self.stop()
+        for worker in list(self._active_workers):
+            worker.wait()
+        self._active_workers.clear()
+        logger.info("Orchestrator workers stopped")
+
+    def _on_clear_context(self, _event: ClearContextRequested) -> None:
+        """Clear current interview context without deleting session history."""
+        self._context_generation += 1
+        self.buffer.clear()
+        self.capture.clear_context(self._context_generation)
+        get_bus().emit(ContextCleared(generation=self._context_generation))
+        logger.info(
+            "Cleared interview context (generation %d)",
+            self._context_generation,
+        )
+
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
@@ -119,6 +153,7 @@ class Orchestrator(QObject):
             stt_client=self.stt,
             audio_bytes=event.audio,
             speaker="Meeting",
+            context_generation=event.context_generation,
             parent=self,
         )
         self._track_worker(worker)
@@ -126,13 +161,20 @@ class Orchestrator(QObject):
 
     def _on_segment(self, event: TranscriptSegmentAdded) -> None:
         """Add segment to buffer, log it, and trigger LLM if threshold met."""
+        if event.context_generation != self._context_generation:
+            logger.debug(
+                "Ignoring transcript from cleared context generation %d",
+                event.context_generation,
+            )
+            return
+
         self.buffer.add(event)
         self.logger.on_segment(event)
 
         # Print to terminal
         print(f"[{event.timestamp:%H:%M:%S}] {event.speaker}: {event.text}")
 
-        if self.buffer.should_trigger():
+        if event.speaker == "Meeting" or self.buffer.should_trigger():
             ctx = self.buffer.get_context_string()
             word_count = self.buffer.total_word_count
             self.buffer.reset_trigger_count()
@@ -141,16 +183,31 @@ class Orchestrator(QObject):
                 llm_client=self.llm,
                 context=ctx,
                 word_count=word_count,
+                context_generation=self._context_generation,
                 parent=self,
             )
             self._track_worker(worker)
             worker.start()
 
-    def _on_questions(self, event: QuestionsReady) -> None:
-        """Print questions to terminal (Phase 2/3 fallback)."""
-        print(f"\n--- QUESTIONS (context: {event.context_word_count} words) ---")
-        for i, q in enumerate(event.questions, start=1):
-            print(f"  {i}. {q}")
+    def _on_answer_event(self, event: AnswerReady) -> None:
+        """Ignore completed answer requests from before the last clear."""
+        if event.context_generation != self._context_generation:
+            logger.debug(
+                "Ignoring answer from cleared context generation %d",
+                event.context_generation,
+            )
+            return
+        self.logger.on_answer(event)
+        self._on_answer(event)
+
+    def _on_answer(self, event: AnswerReady) -> None:
+        """Print answer guidance to terminal for troubleshooting."""
+        print(f"\n--- ANSWER GUIDANCE (context: {event.context_word_count} words) ---")
+        print(event.answer)
+        for point in event.talking_points:
+            print(f"  • {point}")
+        if event.follow_up:
+            print(f"  Clarify: {event.follow_up}")
         print()
 
     def _on_error(self, event: ErrorOccurred) -> None:
@@ -172,7 +229,7 @@ class Orchestrator(QObject):
     def _track_worker(self, worker: QThread) -> None:
         """Track worker and auto-remove on completion."""
         self._active_workers.append(worker)
-        worker.finished.connect(lambda w=worker: self._remove_worker(w))  # type: ignore[misc]
+        worker.finished.connect(lambda w=worker: self._remove_worker(w))
         worker.finished.connect(worker.deleteLater)
 
     def _remove_worker(self, worker: QThread) -> None:

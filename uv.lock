@@ -234,6 +234,51 @@ wheels = [
 ]
 
 [[package]]
+name = "interview-copilot"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "groq" },
+    { name = "keyring" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pyside6" },
+    { name = "pystray" },
+    { name = "sounddevice" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pyinstaller" },
+    { name = "pytest" },
+    { name = "pytest-mock" },
+    { name = "pytest-qt" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "groq", specifier = ">=0.9.0" },
+    { name = "keyring", specifier = ">=25.0.0" },
+    { name = "numpy", specifier = ">=1.26.0" },
+    { name = "pillow", specifier = ">=10.3.0" },
+    { name = "pyside6", specifier = ">=6.7.0" },
+    { name = "pystray", specifier = ">=0.19.5" },
+    { name = "sounddevice", specifier = ">=0.4.7" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.10" },
+    { name = "pyinstaller", specifier = ">=6.8" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-mock", specifier = ">=3.14" },
+    { name = "pytest-qt", specifier = ">=4.4" },
+    { name = "ruff", specifier = ">=0.4" },
+]
+
+[[package]]
 name = "jaraco-classes"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -362,51 +407,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/10/2f/97589876ea967487978071c9042518d28b958d87b17dceb7cdc1d881f963/macholib-1.16.4.tar.gz", hash = "sha256:f408c93ab2e995cd2c46e34fe328b130404be143469e41bc366c807448979362", size = 59427, upload-time = "2025-11-22T08:28:38.373Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/d1/a9f36f8ecdf0fb7c9b1e78c8d7af12b8c8754e74851ac7b94a8305540fc7/macholib-1.16.4-py2.py3-none-any.whl", hash = "sha256:da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea", size = 38117, upload-time = "2025-11-22T08:28:36.939Z" },
-]
-
-[[package]]
-name = "meeting-copilot"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "groq" },
-    { name = "keyring" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "pyside6" },
-    { name = "pystray" },
-    { name = "sounddevice" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pyinstaller" },
-    { name = "pytest" },
-    { name = "pytest-mock" },
-    { name = "pytest-qt" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "groq", specifier = ">=0.9.0" },
-    { name = "keyring", specifier = ">=25.0.0" },
-    { name = "numpy", specifier = ">=1.26.0" },
-    { name = "pillow", specifier = ">=10.3.0" },
-    { name = "pyside6", specifier = ">=6.7.0" },
-    { name = "pystray", specifier = ">=0.19.5" },
-    { name = "sounddevice", specifier = ">=0.4.7" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.10" },
-    { name = "pyinstaller", specifier = ">=6.8" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-mock", specifier = ">=3.14" },
-    { name = "pytest-qt", specifier = ">=4.4" },
-    { name = "ruff", specifier = ">=0.4" },
 ]
 
 [[package]]

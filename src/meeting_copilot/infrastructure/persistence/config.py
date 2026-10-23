@@ -1,4 +1,4 @@
-"""ConfigStore — reads/writes settings to ``~/.meeting-copilot/config.json``.
+"""ConfigStore — reads/writes settings to ``~/.interview-copilot/config.json``.
 
 The API key is stored separately in the OS keyring for security.
 Config writes are atomic (write to ``.tmp``, then rename).
@@ -19,7 +19,7 @@ from meeting_copilot.domain.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-_SERVICE_NAME = "meeting-copilot"
+_SERVICE_NAME = "interview-copilot"
 _KEYRING_USERNAME = "groq_api_key"
 
 # Fields that are NOT persisted in JSON (stored in keyring instead)
@@ -28,7 +28,7 @@ _EXCLUDED_FROM_JSON: frozenset[str] = frozenset()
 
 def _config_dir() -> Path:
     """Return the config directory, creating it if needed."""
-    config_dir = Path.home() / ".meeting-copilot"
+    config_dir = Path.home() / ".interview-copilot"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
@@ -57,6 +57,11 @@ class ConfigStore:
         # Filter to only known Settings fields
         valid_keys = {f.name for f in fields(Settings)}
         filtered = {k: v for k, v in data.items() if k in valid_keys}
+        if (
+            filtered.get("groq_model_llm")
+            == "meta-llama/llama-4-scout-17b-16e-instruct"
+        ):
+            filtered["groq_model_llm"] = Settings().groq_model_llm
         return Settings(**filtered)
 
     # ------------------------------------------------------------------

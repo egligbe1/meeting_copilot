@@ -21,13 +21,14 @@ class TestSettings:
         assert s.mic_device_id is None
         assert s.loopback_device_id == -1
         assert s.groq_model_stt == "whisper-large-v3-turbo"
-        assert s.groq_model_llm == "meta-llama/llama-4-scout-17b-16e-instruct"
-        assert s.word_trigger == 150
+        assert s.groq_model_llm == "openai/gpt-oss-20b"
+        assert s.word_trigger == 55
         assert s.context_window_minutes == 10
         assert s.overlay_x == -1
         assert s.overlay_y == -1
         assert s.overlay_opacity == 0.92
         assert s.meeting_context == ""
+        assert s.interview_focus == "data_engineering"
 
     def test_immutability(self) -> None:
         s = Settings()
@@ -107,3 +108,19 @@ class TestConfigStore:
             settings = store.load()
 
         assert settings == Settings()
+
+    def test_load_migrates_unavailable_llm_model(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {"groq_model_llm": "meta-llama/llama-4-scout-17b-16e-instruct"}
+            ),
+            encoding="utf-8",
+        )
+        with patch(
+            "meeting_copilot.infrastructure.persistence.config._config_path",
+            return_value=config_file,
+        ):
+            settings = ConfigStore().load()
+
+        assert settings.groq_model_llm == "openai/gpt-oss-20b"

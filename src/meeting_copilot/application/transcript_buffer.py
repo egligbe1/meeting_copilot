@@ -55,6 +55,12 @@ class RollingTranscriptBuffer:
         with self._lock:
             self._new_word_count = 0
 
+    def clear(self) -> None:
+        """Discard transcript context and reset the word-trigger counter."""
+        with self._lock:
+            self._buffer.clear()
+            self._new_word_count = 0
+
     @property
     def total_word_count(self) -> int:
         """Total words currently in the buffer (for context reporting)."""

@@ -29,9 +29,14 @@ class GroqSTTClient:
 
     def __init__(self, settings: Settings, api_key: str) -> None:
         self._settings = settings
-        self._client = Groq(api_key=api_key)
+        self._client = Groq(api_key=api_key, timeout=20.0, max_retries=0)
 
-    def transcribe(self, audio_bytes: bytes, speaker: str = "Meeting") -> None:
+    def transcribe(
+        self,
+        audio_bytes: bytes,
+        speaker: str = "Meeting",
+        context_generation: int = 0,
+    ) -> None:
         """Transcribe *audio_bytes* (WAV) and emit a TranscriptSegmentAdded.
 
         Parameters
@@ -69,6 +74,7 @@ class GroqSTTClient:
                     timestamp=datetime.now(),
                     speaker=speaker,
                     text=text,
+                    context_generation=context_generation,
                 )
             )
             logger.debug("Transcribed %d chars from %s", len(text), speaker)

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from meeting_copilot.domain.events import QuestionsReady, TranscriptSegmentAdded
+from meeting_copilot.domain.events import AnswerReady, TranscriptSegmentAdded
 from meeting_copilot.infrastructure.persistence.session import SessionLogger
 
 
 class TestSessionLogger:
-    """SessionLogger creates folders and writes transcript/questions."""
+    """SessionLogger creates folders and writes transcript/answer guidance."""
 
     def test_begin_session_creates_directory(self, tmp_path: object) -> None:
         logger = SessionLogger()
@@ -50,7 +50,7 @@ class TestSessionLogger:
         )
         assert "[14:30:05] You: the Q3 numbers look strong" in transcript
 
-    def test_on_questions_writes_questions(self, tmp_path: object) -> None:
+    def test_on_answer_writes_guidance(self, tmp_path: object) -> None:
         from pathlib import Path
 
         tmp = Path(str(tmp_path))
@@ -64,21 +64,20 @@ class TestSessionLogger:
         ):
             logger.begin_session()
 
-        event = QuestionsReady(
-            questions=(
-                "What is the baseline?",
-                "Who owns the follow-up?",
-            ),
+        event = AnswerReady(
+            answer="I would begin by defining the data contract.",
+            talking_points=("Version schemas", "Monitor freshness"),
+            follow_up="Which latency target matters most?",
             context_word_count=83,
         )
-        logger.on_questions(event)
+        logger.on_answer(event)
 
-        questions = (logger.session_dir / "questions.txt").read_text(  # type: ignore[union-attr]
+        guidance = (logger.session_dir / "answer_guidance.txt").read_text(  # type: ignore[union-attr]
             encoding="utf-8"
         )
-        assert "context: 83 words" in questions
-        assert "1. What is the baseline?" in questions
-        assert "2. Who owns the follow-up?" in questions
+        assert "context: 83 words" in guidance
+        assert "I would begin by defining the data contract." in guidance
+        assert "• Version schemas" in guidance
 
     def test_on_segment_before_begin_does_nothing(self) -> None:
         logger = SessionLogger()

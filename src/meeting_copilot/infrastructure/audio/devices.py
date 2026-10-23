@@ -1,4 +1,4 @@
-"""Audio device discovery — list input devices and find WASAPI loopback.
+"""Audio device discovery — list inputs and recognize virtual system-audio devices.
 
 Cross-platform: on Windows, detects WASAPI loopback devices automatically.
 On macOS / Linux, simply lists available input devices.
@@ -50,7 +50,12 @@ def list_devices() -> list[AudioDevice]:
         
         # 2. Heuristic loopback (Stereo Mix, What U Hear, etc.)
         if not is_loopback:
-            keywords = ["stereo mix", "what u hear", "system mix", "wave out", "loopback"]
+            keywords = [
+                "stereo mix", "what u hear", "system mix", "wave out", "loopback",
+                # macOS virtual audio drivers.  BlackHole is the recommended
+                # option because it is free and exposes an input device.
+                "blackhole", "loopback audio", "soundflower",
+            ]
             if any(k in name for k in keywords):
                 is_loopback = True
             
@@ -87,6 +92,9 @@ def find_best_loopback() -> AudioDevice | None:
     
     Prioritizes devices that match the current default output's name.
     """
+    if sys.platform == "darwin":
+        candidates = [device for device in list_devices() if device["is_loopback"]]
+        return candidates[0] if candidates else None
     if sys.platform != "win32":
         return None
 

@@ -12,10 +12,23 @@ from datetime import datetime
 
 @dataclass(frozen=True)
 class AudioChunkReady:
-    """Emitted by AudioThread when a 15-second audio chunk is captured."""
+    """Emitted by AudioThread when a system-audio speech segment is captured."""
 
     audio: bytes  # 16-bit PCM, 16 kHz, mono (WAV bytes)
     length_ms: int
+    context_generation: int = 0
+
+
+@dataclass(frozen=True)
+class ClearContextRequested:
+    """Emitted when the user starts a fresh interview-question context."""
+
+
+@dataclass(frozen=True)
+class ContextCleared:
+    """Emitted after the current transcript and pending audio are invalidated."""
+
+    generation: int
 
 
 @dataclass(frozen=True)
@@ -25,14 +38,18 @@ class TranscriptSegmentAdded:
     timestamp: datetime
     speaker: str  # 'You' | 'Meeting'
     text: str
+    context_generation: int = 0
 
 
 @dataclass(frozen=True)
-class QuestionsReady:
-    """Emitted by GroqLLMClient with AI-generated questions."""
+class AnswerReady:
+    """Emitted by GroqLLMClient with interview-ready answer guidance."""
 
-    questions: tuple[str, ...]
+    answer: str
+    talking_points: tuple[str, ...]
+    follow_up: str | None
     context_word_count: int
+    context_generation: int = 0
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""QuestionCard widget — displays a single AI-generated question.
+"""AnswerCard widget — displays a short answer and supporting talking points.
 
 Styled with a dark background, a teal left border accent, and a dismiss button.
 Includes a fade-in animation on show.
@@ -12,18 +12,18 @@ from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, Signal, Q
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QGraphicsOpacityEffect
 
 
-class QuestionCard(QFrame):
-    """A dismissible question card for the overlay."""
+class AnswerCard(QFrame):
+    """A dismissible answer-guidance card for the overlay."""
 
     dismissed = Signal()  # Emitted when the user clicks 'X'
 
-    def __init__(self, question: str, parent: Any = None) -> None:
+    def __init__(self, answer: str, talking_points: tuple[str, ...], follow_up: str | None, parent: Any = None) -> None:
         super().__init__(parent)
         self.setObjectName("QuestionCard")
 
         # Layout
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(12, 12, 12, 12)
+        self.layout.setContentsMargins(16, 14, 16, 14)
         self.layout.setSpacing(8)
 
         # Teal side accent
@@ -35,11 +35,25 @@ class QuestionCard(QFrame):
             }
         """)
 
-        # Question text
-        self.label = QLabel(question)
-        self.label.setWordWrap(True)
-        self.label.setStyleSheet("color: #F9FAFB; font-weight: 500;")
-        self.layout.addWidget(self.label)
+        content = QVBoxLayout()
+        content.setSpacing(6)
+        answer_label = QLabel(answer)
+        answer_label.setWordWrap(True)
+        answer_label.setStyleSheet(
+            "color: #F9FAFB; font-size: 15px; font-weight: 600;"
+        )
+        content.addWidget(answer_label)
+        if talking_points:
+            points_label = QLabel("\n".join(f"• {point}" for point in talking_points))
+            points_label.setWordWrap(True)
+            points_label.setStyleSheet("color: #D1D5DB; font-size: 14px;")
+            content.addWidget(points_label)
+        if follow_up:
+            clarify_label = QLabel(f"Clarify: {follow_up}")
+            clarify_label.setWordWrap(True)
+            clarify_label.setStyleSheet("color: #5EEAD4; font-style: italic;")
+            content.addWidget(clarify_label)
+        self.layout.addLayout(content)
 
         # Dismiss button
         self.btn_close = QPushButton("✕")
